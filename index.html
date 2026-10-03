@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#30304a">
+<title>PIXEL TENNIS</title>
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; }
+body {
+  display: grid; place-items: center; background: #25283d; color: #34334d;
+  font-family: "Courier New", monospace; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.console {
+  width: min(94vw, 440px, 52vh); width: min(94vw, 440px, 52dvh);
+  padding: min(4vw, 18px);
+  background: #b7abc9; border: 4px solid #ded3e4;
+  border-bottom: 10px solid #807490; border-radius: 20px 20px 48px 20px;
+  box-shadow: 8px 8px 0 #171b2c;
+}
+.brand { display: flex; justify-content: space-between; font-size: clamp(9px, 2.7vw, 12px); font-weight: bold; margin: 0 2px 12px; letter-spacing: 2px; }
+.brand span:last-child { color: #685974; letter-spacing: 0; }
+.bezel { padding: 12px; background: #34334d; border: 3px solid #81748d; border-radius: 9px 9px 24px 9px; }
+canvas { display: block; width: 100%; aspect-ratio: 1; background: #18283e; image-rendering: pixelated; image-rendering: crisp-edges; }
+.screen-label { display: flex; justify-content: space-between; color: #b7abc9; font-size: 9px; letter-spacing: 1px; margin-top: 9px; }
+.led { display: inline-block; width: 6px; height: 6px; margin-right: 5px; background: #b8dc78; }
+.controls { display: flex; align-items: center; justify-content: space-between; margin: 20px 4px 12px; gap: 12px; touch-action: none; }
+.dpad { display: grid; grid-template: repeat(3, 1fr) / repeat(3, 1fr); width: 36%; aspect-ratio: 1; }
+button { font: bold 20px "Courier New", monospace; color: #ddd6e5; cursor: pointer; border: 0; padding: 0; touch-action: none; -webkit-touch-callout: none; }
+.dir, .hub { background: #34334d; box-shadow: 0 4px 0 #686077; }
+.dir { font-size: clamp(12px, 4vw, 20px); }
+.dir[data-key="up"] { grid-area: 1 / 2; border-radius: 5px 5px 0 0; }
+.dir[data-key="left"] { grid-area: 2 / 1; border-radius: 5px 0 0 5px; }
+.hub { grid-area: 2 / 2; display: grid; place-items: center; }
+.hub::after { content: ""; width: 25%; height: 25%; background: #55536a; }
+.dir[data-key="right"] { grid-area: 2 / 3; border-radius: 0 5px 5px 0; }
+.dir[data-key="down"] { grid-area: 3 / 2; border-radius: 0 0 5px 5px; }
+.actions { display: flex; gap: 13px; width: 43%; align-items: center; }
+.action { width: 50%; text-align: center; }
+.action:first-child { margin-top: 28px; }
+.action button { width: 100%; aspect-ratio: 1; border-radius: 50%; background: #a7466b; border: 3px solid #783855; box-shadow: 0 5px 0 #683650; }
+.action small { display: block; font-size: clamp(8px, 2.4vw, 11px); font-weight: bold; margin-top: 9px; letter-spacing: 1px; }
+button.held { filter: brightness(1.25); transform: translateY(3px); box-shadow: 0 1px 0 #686077; }
+button:focus-visible { outline: 3px solid #f6e9a5; outline-offset: 3px; }
+.help { text-align: center; font-size: clamp(8px, 2.2vw, 11px); line-height: 1.6; font-weight: bold; color: #5d526d; }
+</style>
+</head>
+<body>
+<main class="console" aria-label="Pixel Tennis handheld game">
+  <div class="brand"><span>PIXEL TENNIS</span><span>POCKET / 01</span></div>
+  <div class="bezel">
+    <canvas id="game" width="320" height="320" aria-label="Pixel Tennis court. Arrow keys move. Z strokes or serves. X lobs."></canvas>
+    <div class="screen-label"><span><i class="led"></i>POWER</span><span>COLOR / TENNIS</span></div>
+  </div>
+  <div class="controls">
+    <div class="dpad" role="group" aria-label="Movement">
+      <button class="dir" data-key="up" aria-label="Move up">▲</button>
+      <button class="dir" data-key="left" aria-label="Move left">◀</button>
+      <div class="hub" aria-hidden="true"></div>
+      <button class="dir" data-key="right" aria-label="Move right">▶</button>
+      <button class="dir" data-key="down" aria-label="Move down">▼</button>
+    </div>
+    <div class="actions">
+      <div class="action"><button data-key="b" aria-label="B: lob, X key">B</button><small>LOB / X</small></div>
+      <div class="action"><button data-key="a" aria-label="A: stroke or serve, Z key">A</button><small>HIT / Z</small></div>
+    </div>
+  </div>
+  <div class="help">ARROWS TO MOVE · HOLD LEFT / RIGHT TO AIM<br>ONE GAME · WIN BY TWO AT DEUCE</div>
+</main>
+<script>
+"use strict";
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+const C = {
+  ink: "#18283e", grass: "#397966", court: "#69a66c", light: "#d9e7a2",
+  blue: "#62c4dd", pink: "#ef8792", skin: "#f3c79a", ball: "#f9ed81",
+  shadow: "#326557", white: "#f4f0ce"
+};
+const keys = new Set();
+const pointers = new Map();
+const buttons = [...document.querySelectorAll("[data-key]")];
+const player = { x: 100, y: 209, swing: 0, walk: 0 };
+const cpu = { x: 100, y: 34, swing: 0, walk: 0 };
+let state = "title", phase = "serve", score = [0, 0], server = 0;
+let ball = null, timer = 0, clock = 0, queued = null, cooldown = 0;
+let message = "", winner = 0, bounceFlash = null;
+let ai = { delay: 0, error: 0, miss: false };
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+const held = key => keys.has(key) || [...pointers.values()].includes(key);
+
+function syncButtons() {
+  for (const button of buttons) button.classList.toggle("held", held(button.dataset.key));
+}
+function press(key) {
+  if (key !== "a" && key !== "b") return;
+  if (state !== "match") {
+    if (key === "a") {
+      score = [0, 0]; server = 0; state = "match"; resetPoint();
+    }
+    return;
+  }
+  if (phase === "serve") {
+    if (server === 0 && key === "a") serve();
+    return;
+  }
+  if (phase === "rally" && cooldown <= 0) {
+    queued = { kind: key, life: 0.24, aim: Number(held("right")) - Number(held("left")) };
+    player.swing = 0.24; cooldown = 0.24;
+    tryPlayerHit();
+  }
+}
+const keyMap = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", KeyZ: "a", KeyX: "b" };
+window.addEventListener("keydown", e => {
+  const key = keyMap[e.code];
+  if (!key) return;
+  e.preventDefault();
+  if (!keys.has(key)) { keys.add(key); press(key); }
+  syncButtons();
+});
+window.addEventListener("keyup", e => {
+  const key = keyMap[e.code];
+  if (key) { e.preventDefault(); keys.delete(key); syncButtons(); }
+});
+for (const button of buttons) {
+  button.addEventListener("pointerdown", e => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    e.preventDefault();
+    button.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, button.dataset.key);
+    syncButtons(); press(button.dataset.key);
+  });
+  // Sliding a held finger to a different D-pad arm changes direction.
+  button.addEventListener("pointermove", e => {
+    const current = pointers.get(e.pointerId);
+    if (!current || current === "a" || current === "b") return;
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    const key = target && target.dataset ? target.dataset.key : "";
+    if (["up", "down", "left", "right"].includes(key)) {
+      pointers.set(e.pointerId, key); syncButtons();
+    }
+  });
+  for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    button.addEventListener(type, e => { pointers.delete(e.pointerId); syncButtons(); });
+  }
+  // Accessible activation from Enter, Space, or assistive technology.
+  button.addEventListener("click", e => { if (e.detail === 0) press(button.dataset.key); });
+}
+function clearInput() { keys.clear(); pointers.clear(); queued = null; syncButtons(); }
+window.addEventListener("blur", clearInput);
+document.addEventListener("visibilitychange", () => { clearInput(); lastTime = 0; });
+document.querySelector(".controls").addEventListener("contextmenu", e => e.preventDefault());
+
+function resetPoint() {
+  player.x = 100; player.y = 209; player.swing = 0;
+  cpu.x = 100; cpu.y = 34; cpu.swing = 0;
+  ball = null; queued = null; cooldown = 0; bounceFlash = null;
+  phase = "serve"; timer = 0.95;
+  message = server === 0 ? "YOUR SERVE - PRESS A" : "CPU SERVING";
+}
+function serve() {
+  const who = server === 0 ? player : cpu;
+  ball = { x: who.x + 8, y: who.y, z: 8 };
+  who.swing = 0.24;
+  launch(server, "a", server === 0 ? Number(held("right")) - Number(held("left")) : rand(-0.7, 0.7));
+  phase = "rally"; message = "";
+}
+function launch(side, kind, aim) {
+  const lob = kind === "b";
+  const tx = side === 0 ? clamp(100 + aim * 67 + rand(-8, 8), 12, 188) : rand(24, 176);
+  const ty = side === 0 ? (lob ? 19 : 44) : (lob ? 221 : 199);
+  ball = {
+    x: ball.x, y: ball.y, z: ball.z,
+    sx: ball.x, sy: ball.y, sz: Math.min(ball.z, 24),
+    tx, ty, t: 0, duration: lob ? 1.65 : 1.05,
+    arc: lob ? 62 : 22, lob, hitter: side, receiver: 1 - side, bounces: 0
+  };
+  if (side === 0) ai = { delay: rand(0.20, 0.38), error: rand(-12, 12), miss: Math.random() < 0.09 };
+  queued = null;
+}
+function canHit(who, side) {
+  return ball && ball.receiver === side && ball.z <= 30 &&
+    (side === 0 ? ball.y > 128 : ball.y < 112) &&
+    Math.hypot(ball.x - who.x, ball.y - who.y) < 27;
+}
+function tryPlayerHit() {
+  if (queued && canHit(player, 0)) {
+    player.swing = 0.24;
+    launch(0, queued.kind, queued.aim);
+  }
+}
+function scoreLabel() {
+  const [p, c] = score;
+  if (p >= 3 && c >= 3) {
+    if (p === c) return "DEUCE";
+    return p > c ? "PLAYER ADVANTAGE" : "CPU ADVANTAGE";
+  }
+  const labels = ["0", "15", "30", "40"];
+  return "YOU " + labels[Math.min(p, 3)] + " : " + labels[Math.min(c, 3)] + " CPU";
+}
+function point(side, reason) {
+  score[side]++;
+  ball = null; queued = null; winner = side;
+  if (score[side] >= 4 && score[side] - score[1 - side] >= 2) {
+    state = "result"; message = side === 0 ? "YOU WIN!" : "CPU WINS";
+  } else {
+    phase = "point"; timer = 1.25;
+    message = (side === 0 ? "YOUR POINT" : "CPU POINT") + " - " + reason;
+  }
+}
+function move(who, tx, ty, speed, dt, near) {
+  const dx = tx - who.x, dy = ty - who.y, distance = Math.hypot(dx, dy);
+  if (distance > 0.3) {
+    const step = Math.min(distance, speed * dt);
+    who.x += dx / distance * step; who.y += dy / distance * step;
+    who.walk += step * 0.16;
+  }
+  who.x = clamp(who.x, 8, 192);
+  who.y = clamp(who.y, near ? 132 : 8, near ? 234 : 108);
+}
+function update(dt) {
+  clock += dt;
+  player.swing = Math.max(0, player.swing - dt);
+  cpu.swing = Math.max(0, cpu.swing - dt);
+  cooldown = Math.max(0, cooldown - dt);
+  if (bounceFlash) { bounceFlash.life -= dt; if (bounceFlash.life <= 0) bounceFlash = null; }
+  if (state !== "match") return;
+  if (phase === "point") {
+    timer -= dt;
+    if (timer <= 0) { server = (score[0] + score[1]) % 2; resetPoint(); }
+    return;
+  }
+  const dx = Number(held("right")) - Number(held("left"));
+  const dy = Number(held("down")) - Number(held("up"));
+  if (dx || dy) move(player, player.x + dx * 100, player.y + dy * 100, 128, dt, true);
+  if (phase === "serve") {
+    if (server === 1) { timer -= dt; if (timer <= 0) serve(); }
+    return;
+  }
+  ai.delay -= dt;
+  if (ball.receiver === 1 && ai.delay <= 0) {
+    move(cpu, clamp(ball.tx + ai.error, 8, 192), clamp(ball.ty + 5, 8, 108), ai.miss ? 38 : 96, dt, false);
+  } else if (ball.receiver === 0) move(cpu, 100, 36, 52, dt, false);
+  ball.t += dt;
+  if (ball.bounces === 0) {
+    const t = Math.min(1, ball.t / ball.duration);
+    ball.x = ball.sx + (ball.tx - ball.sx) * t;
+    ball.y = ball.sy + (ball.ty - ball.sy) * t;
+    ball.z = (1 - t) * ball.sz + 4 * ball.arc * t * (1 - t);
+    if (t >= 1) {
+      const validHalf = ball.receiver === 0 ? ball.y > 120 : ball.y < 120;
+      if (ball.x < 0 || ball.x > 200 || ball.y < 0 || ball.y > 240 || !validHalf) {
+        point(ball.receiver, "OUT"); return;
+      }
+      ball.bounces = 1; ball.t = 0;
+      ball.vx = (ball.tx - ball.sx) / ball.duration * 0.32;
+      ball.vy = (ball.ty - ball.sy) / ball.duration * 0.32;
+      bounceFlash = { x: ball.x, y: ball.y, life: 0.22 };
+    }
+  } else {
+    const duration = ball.lob ? 1.0 : 0.82;
+    ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+    ball.z = Math.sin(Math.min(1, ball.t / duration) * Math.PI) * (ball.lob ? 21 : 14);
+    if (ball.t >= duration) { point(ball.hitter, "DOUBLE BOUNCE"); return; }
+  }
+  tryPlayerHit();
+  if (ball && ball.receiver === 1 && ai.delay <= 0 && !ai.miss && canHit(cpu, 1) && ball.bounces > 0) {
+    cpu.swing = 0.24;
+    launch(1, Math.random() < 0.18 ? "b" : "a", 0);
+  }
+  if (queued) { queued.life -= dt; if (queued.life <= 0) queued = null; }
+}
+
+// Court coordinates are projected into a gently tapered, top-down view.
+function project(x, y, z = 0) {
+  return { x: Math.round(160 + (x - 100) * (0.72 + y / 800)), y: Math.round(58 + y * 0.94 - z * 0.72) };
+}
+function rect(x, y, w, h, color) { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), w, h); }
+function line(x1, y1, x2, y2, color, width = 2) {
+  ctx.strokeStyle = color; ctx.lineWidth = width;
+  ctx.beginPath(); ctx.moveTo(Math.round(x1), Math.round(y1)); ctx.lineTo(Math.round(x2), Math.round(y2)); ctx.stroke();
+}
+function courtLine(x1, y1, x2, y2) {
+  const a = project(x1, y1), b = project(x2, y2);
+  line(a.x, a.y, b.x, b.y, C.light);
+}
+function text(str, x, y, size = 10, color = C.white, align = "center") {
+  ctx.fillStyle = color; ctx.font = "bold " + size + "px monospace";
+  ctx.textAlign = align; ctx.textBaseline = "middle"; ctx.fillText(str, x, y);
+}
+function drawCourt() {
+  rect(0, 0, 320, 320, C.grass);
+  for (let y = 45; y < 298; y += 16) for (let x = (y % 32 ? 7 : 15); x < 320; x += 24) {
+    rect(x, y, 2, 2, C.shadow);
+  }
+  const corners = [project(0, 0), project(200, 0), project(200, 240), project(0, 240)];
+  ctx.fillStyle = C.court; ctx.beginPath();
+  corners.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+  ctx.closePath(); ctx.fill();
+  courtLine(0, 0, 200, 0); courtLine(200, 0, 200, 240);
+  courtLine(200, 240, 0, 240); courtLine(0, 240, 0, 0);
+  courtLine(19, 0, 19, 240); courtLine(181, 0, 181, 240);
+  courtLine(19, 62, 181, 62); courtLine(19, 178, 181, 178);
+  courtLine(100, 62, 100, 178);
+  courtLine(100, 0, 100, 5); courtLine(100, 235, 100, 240);
+  rect(5, 72, 16, 34, C.ink); rect(8, 75, 10, 6, C.pink);
+  rect(299, 233, 16, 34, C.ink); rect(302, 236, 10, 6, C.blue);
+}
+function drawNet() {
+  const a = project(-7, 120), b = project(207, 120);
+  rect(a.x, a.y - 10, b.x - a.x, 12, C.shadow);
+  for (let x = a.x; x < b.x; x += 5) line(x, a.y - 10, x, a.y, C.light, 1);
+  for (let y = a.y - 10; y <= a.y; y += 4) line(a.x, y, b.x, y, C.light, 1);
+  rect(a.x - 2, a.y - 14, 4, 20, C.ink); rect(b.x - 2, b.y - 14, 4, 20, C.ink);
+  rect(a.x, a.y - 12, b.x - a.x, 3, C.white);
+}
+function drawHuman(who, color, near) {
+  const p = project(who.x, who.y);
+  const step = Math.sin(who.walk) > 0 ? 1 : -1;
+  rect(p.x - 7, p.y - 1, 15, 4, C.shadow);
+  rect(p.x - 4, p.y - 10, 3, 9 + step, C.ink);
+  rect(p.x + 1, p.y - 10, 3, 9 - step, C.ink);
+  rect(p.x - 5, p.y - 3 + step, 4, 3, C.white);
+  rect(p.x + 1, p.y - 3 - step, 4, 3, C.white);
+  rect(p.x - 5, p.y - 19, 10, 11, color);
+  rect(p.x - 6, p.y - 9, 12, 4, C.white);
+  rect(p.x - 4, p.y - 26, 8, 8, C.skin);
+  rect(p.x - 5, p.y - 28, 10, 4, C.ink);
+  rect(p.x - 5, p.y - 25, 11, 2, color);
+  rect(p.x - 8, p.y - 18, 3, 8, C.skin);
+  const swing = who.swing > 0;
+  const rx = p.x + (swing ? -12 : 13), ry = p.y - (swing ? 23 : 14);
+  line(p.x + 5, p.y - 15, rx, ry + 5, C.skin, 3);
+  line(rx, ry + 6, rx, ry + 1, C.ink, 2);
+  rect(rx - 4, ry - 8, 9, 10, C.ink); rect(rx - 3, ry - 7, 7, 8, C.light);
+  rect(rx - 1, ry - 6, 1, 6, C.grass); rect(rx - 2, ry - 3, 5, 1, C.grass);
+  if (near) rect(p.x - 2, p.y - 21, 1, 1, C.ink);
+}
+function drawBall(b) {
+  const shadow = project(b.x, b.y), p = project(b.x, b.y, b.z);
+  rect(shadow.x - 2, shadow.y, 5, 2, C.shadow);
+  rect(p.x - 3, p.y - 3, 6, 6, C.ink);
+  rect(p.x - 2, p.y - 2, 4, 4, C.ball);
+  rect(p.x - 1, p.y - 2, 1, 2, C.white);
+}
+function panel(y, h) {
+  rect(24, y + 4, 276, h, C.ink); rect(20, y, 280, h, C.light);
+  rect(23, y + 3, 274, h - 6, C.ink);
+}
+function draw() {
+  drawCourt(); drawHuman(cpu, C.pink, false); drawNet(); drawHuman(player, C.blue, true);
+  if (bounceFlash) {
+    const p = project(bounceFlash.x, bounceFlash.y);
+    line(p.x - 5, p.y, p.x + 5, p.y, C.ball, 1);
+  }
+  if (ball) drawBall(ball);
+  else if (state === "match" && phase === "serve") {
+    const who = server === 0 ? player : cpu;
+    drawBall({ x: who.x + 9, y: who.y, z: 12 });
+  }
+  rect(0, 0, 320, 38, C.ink);
+  text("PIXEL TENNIS", 160, 11, 10, C.ball);
+  text(state === "match" ? scoreLabel() : "YOU / CPU · SINGLES", 160, 27, 12);
+  rect(0, 299, 320, 21, C.ink);
+  text(state === "match" ? (message || "A STROKE   B LOB   ← → AIM") : "A / Z TO PLAY", 160, 310, 10, C.light);
+  if (state === "title") {
+    panel(92, 118);
+    text("PIXEL", 160, 119, 27, C.ball); text("TENNIS", 160, 146, 27, C.blue);
+    text("YOU VS CPU", 160, 173, 11, C.light);
+    if (Math.floor(clock * 2) % 2 === 0) text("PRESS A TO START", 160, 195, 12);
+  } else if (state === "result") {
+    panel(98, 109);
+    text(message, 160, 124, 25, winner === 0 ? C.blue : C.pink);
+    text("GAME · " + score[0] + " - " + score[1] + " POINTS", 160, 153, 11, C.light);
+    text("PRESS A TO PLAY AGAIN", 160, 183, 11);
+  } else if (phase === "point") {
+    panel(127, 55);
+    text(winner === 0 ? "YOUR POINT!" : "CPU POINT", 160, 145, 19, winner === 0 ? C.blue : C.pink);
+    text(scoreLabel(), 160, 167, 12);
+  }
+}
+let lastTime = 0;
+function frame(now) {
+  const dt = lastTime ? Math.min((now - lastTime) / 1000, 0.035) : 0;
+  lastTime = now;
+  if (!document.hidden) { update(dt); draw(); }
+  requestAnimationFrame(frame);
+}
+draw(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
